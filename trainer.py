@@ -68,21 +68,38 @@ class Trainer(object):
 
         optimizer.zero_grad()
         optimizer_u.zero_grad()
-        pseudo_ratings = []
-        for index,item_neg in enumerate(pseudo_data["neg_item_index"]):
-            index = 4 - index
-            pseudo_embeddings = torch.cat(
-                [
-                    pseudo_embeddings[:-index],  # 原来的第一行
-                    model_client.embedding_item(torch.tensor(item_neg)),  # 要插入的4行
-                    pseudo_embeddings[-index:],  # 原来的剩余4行
-                ],
-                dim=0,
-            )
-            pseudo_ratings.append(1)
-            pseudo_ratings.extend([0] * 4)
+        optimizer_i.zero_grad()
 
-        pseudo_ratings = torch.tensor(pseudo_ratings).float()
+        pseudo_embeddings = pseudo_data[
+            "pseudo_embeddings"
+        ]
+
+        negative_item_ids = torch.tensor(
+            pseudo_data["neg_item_index"],
+            dtype=torch.long,
+        )
+
+        negative_embeddings = model_client.embedding_item(
+            negative_item_ids
+        )
+        pseudo_embeddings = pseudo_embeddings.unsqueeze(1)
+
+        pseudo_embeddings = torch.cat(
+            [pseudo_embeddings, negative_embeddings],
+            dim=1,
+        )
+
+        pseudo_embeddings = pseudo_embeddings.reshape(-1, 8)
+
+        pseudo_ratings = torch.zeros(
+            5,
+            5,
+            dtype=torch.float32,
+        )
+
+        pseudo_ratings[:, 0] = 1.0
+        pseudo_ratings = pseudo_ratings.reshape(-1)
+
         pseudo_predictions = model_client(
             item_indices=[0] * pseudo_embeddings.shape[0],
             external_item_embeddings=pseudo_embeddings,
@@ -97,6 +114,7 @@ class Trainer(object):
         loss.backward()
         optimizer.step()
         optimizer_u.step()
+        optimizer_i.step()
 
     def fed_train_single_batch(self,model_client, batch_data,local_optimizers,proxy_model = None):
         """train a batch and return an updated model."""
@@ -442,7 +460,7 @@ class Trainer(object):
                         "pseudo_embeddings":torch.from_numpy(
                                                 pseudo_embeddings
                                             ).float(),
-                        "neg_item_index": self.pseudo_train_data[user]
+                        "neg_item_index": self.pseudo_neg_train_data[user]
 
 
                     }
@@ -735,6 +753,7 @@ class Trainer(object):
             logging.info('-' * 80)
             logging.info('Training phase!')  # 每一个epoch都要重新sample
             all_train_data = sample_generator.store_all_train_data(config['num_negative'])
+            self.pseudo_neg_train_data = sample_generator.store_pseudo_train_data(4) # 为伪物品负采样
             train_loss, big_loss, proxy_loss, big_to_proxy_dis_loss, proxy_to_big_dis_loss, distribution_distillation_loss = self.fed_train_a_round(all_train_data, round)
             logging.info('Trn_Loss={:.5f}'.format(train_loss))
             logging.info('Big_Loss={:.5f}'.format(big_loss))

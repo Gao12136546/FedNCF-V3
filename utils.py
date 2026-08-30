@@ -172,8 +172,9 @@ def load_data(config):
     pseudo_item_embeddings = {
         user_id_map[element]: pseudo_embeddings[index] for index, element in enumerate(pseudo_user_ids)
     }
+    item_id_map = item_id.set_index("itemId")["mid"].to_dict()
 
-    return rating,pseudo_item_embeddings
+    return rating,pseudo_item_embeddings,item_id_map
 
 # 画出结果图,全局、大客户端、小客户端三种类型。
 def plot_type1(lists,type,num,config):
