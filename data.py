@@ -53,7 +53,8 @@ class SampleGenerator(object):
         # divide all ratings into train and test two dataframes, which consit of userId, itemId and rating three columns.
         self.train_ratings, self.test_ratings = self._split_loo(self.preprocess_ratings)
 
-        self.negatives = self._sample_negative(self.train_ratings)
+        # Held-out positives must never become training/evaluation negatives.
+        self.negatives = self._sample_negative(self.preprocess_ratings)
     
     def get_data(self):
         if not os.path.exists(self.dataset_dir + "train.npy"):# explicit feedback using _normalize and implicit using _binarize
@@ -79,7 +80,7 @@ class SampleGenerator(object):
     def _binarize(self, ratings):
         """binarize into 0 or 1, imlicit feedback"""
         ratings = deepcopy(ratings)
-        ratings['rating'][ratings['rating'] > 0] = 1.0
+        ratings.loc[ratings['rating'] > 0, 'rating'] = 1.0
         return ratings
 
     def _split_loo(self, ratings):
@@ -97,10 +98,18 @@ class SampleGenerator(object):
         return train[['userId', 'itemId', 'rating']], test[['userId', 'itemId', 'rating']]
 
     def _sample_negative(self, ratings):
-        """return all negative items & 198 sampled negative items (99 for val, 99 for tst)"""
+        """Exclude all observed interactions, including held-out positives."""
         interact_status = ratings.groupby('userId')['itemId'].apply(set).reset_index().rename(
             columns={'itemId': 'interacted_items'})
         interact_status['negative_items'] = interact_status['interacted_items'].apply(lambda x: list(self.item_pool - x))
+        for row in interact_status.itertuples():
+            required = max(self.NUM_NEG, self.num_negative)
+            if len(row.negative_items) < required:
+                raise ValueError(
+                    f"User {row.userId} has {len(row.negative_items)} unobserved items; "
+                    f"need {required} for sampling without replacement "
+                    f"(NUM_NEG={self.NUM_NEG}, num_negative={self.num_negative})."
+                )
         interact_status['val_negative_samples'] = interact_status['negative_items'].apply(lambda x: random.sample(x, self.NUM_NEG))
         interact_status['tst_negative_samples'] = interact_status['negative_items'].apply(lambda x: random.sample(x, self.NUM_NEG))
         return interact_status[['userId', 'negative_items', 'val_negative_samples', 'tst_negative_samples']]
